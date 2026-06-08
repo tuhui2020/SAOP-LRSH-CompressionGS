@@ -1,172 +1,179 @@
 # README_IMPROVEMENT
 
-## Project
+## 1. Project and Branch
 
-This repository is an improved implementation based on the CompGS / Gaussian Splatting compression codebase. The submitted branch adds an opacity-pruning and SH-compression variant for reproducible 3DGS compression experiments.
+Project name:
 
-The implementation keeps the original training entry points and adds the improved path in `train_kmeans.py` and `scene/gaussian_model.py`.
+```text
+SAOP-LRSH: Scale-Aware Opacity Pruning with Low-Rank SH Compression
+```
 
-## Method Changes
+This repository is prepared for the SLAM Technology final project requirement:
 
-1. Scale-aware opacity pruning
-   - Adds explicit opacity pruning after densification.
-   - Supports a scale-aware condition so low-opacity Gaussians are pruned more aggressively when their scale is also above a chosen quantile.
-   - Main arguments: `--opacity_prune_start_iter`, `--opacity_prune_interval`, `--opacity_prune_threshold`, `--scale_aware_pruning`, `--scale_prune_quantile`.
+```text
+Fork original repository, create an improvement branch, and provide reproducible baseline and improved commands.
+```
 
-2. Low-rank SH compression
-   - Adds `lowrank_sh` as a quantized attribute option.
-   - Replaces full SH coefficient quantization with a rank-limited low-rank representation before k-means storage.
-   - Main arguments: `--quant_params rot scale dc lowrank_sh`, `--lowrank_sh_rank`.
+The uploaded code contains both:
 
-3. Regularized pruning schedule
-   - Keeps opacity regularization compatible with the pruning schedule.
-   - Main arguments: `--opacity_reg`, `--lambda_reg`.
+- Baseline-compatible 3DGS / CompressionGS training code.
+- Modified SAOP-LRSH implementation.
 
-## Key Modified Files
+The method description corresponds to the report sections:
+
+- Section 5: Identified Limitations
+- Section 6: Proposed Improvements
+- Section 7: Experiments and Ablations
+
+## 2. Improvement Summary
+
+### 2.1 Scale-Aware Opacity Pruning
+
+Motivation: the baseline compression pipeline can retain many low-opacity Gaussians after densification. These Gaussians increase storage and deployment size, while their contribution to final rendering is limited.
+
+Implementation:
+
+- Adds opacity-threshold pruning after the main densification stage.
+- Adds scale-aware filtering, so pruning can target Gaussians that are both low-opacity and large-scale.
+- Main arguments:
+
+```text
+--opacity_prune_start_iter
+--opacity_prune_interval
+--opacity_prune_threshold
+--scale_aware_pruning
+--scale_prune_quantile
+```
+
+### 2.2 Low-Rank SH Compression
+
+Motivation: full spherical harmonics coefficients are expensive to store in compressed 3DGS models. Direct k-means compression of full SH features can keep model size high.
+
+Implementation:
+
+- Adds `lowrank_sh` as a quantized attribute.
+- Builds a rank-limited SH representation before k-means storage.
+- Decodes low-rank SH features when loading quantized models.
+- Main arguments:
+
+```text
+--quant_params rot scale dc lowrank_sh
+--lowrank_sh_rank
+```
+
+## 3. Modified Files
+
+```text
+train_kmeans.py
+scene/gaussian_model.py
+scripts/run_batch_op07_q995_30k.py
+README.md
+README_IMPROVEMENT.md
+```
+
+Important implementation points:
 
 - `train_kmeans.py`
-  - Adds low-rank SH state construction.
-  - Adds pruning schedule controls.
-  - Adds command-line arguments for rank, opacity threshold, scale-aware pruning, and lambda regularization.
+  - Adds `build_lowrank_sh_state`.
+  - Adds `--lowrank_sh_rank`.
+  - Adds opacity-pruning schedule arguments.
+  - Prevents invalid mixed use of `lowrank_sh` with `sh` or `add_sh_dc`.
 
 - `scene/gaussian_model.py`
-  - Adds low-rank SH decode support during quantized model loading.
+  - Adds quantized low-rank SH decode.
   - Adds scale-aware pruning support.
 
 - `scripts/run_batch_op07_q995_30k.py`
-  - Reproduces the final 8-experiment batch used in the report.
+  - Runs the final 8 reported experiments.
+  - Saves per-scene summaries and aggregate CSV/JSON records.
 
-## Environment
+## 4. Environment
 
-The experiments were run with the local conda environment:
+The experiments were run in the following local environment:
+
+```text
+Python: 3.10.20
+PyTorch: 2.8.0+cu128
+PyTorch CUDA runtime: 12.8
+CUDA toolkit / nvcc: 12.8, V12.8.93
+Conda env path: /data/miniconda3/envs/gaussian_splatting
+```
+
+Install with the provided environment file when possible:
+
+```bash
+conda env create -f environment.yml
+conda activate gaussian_splatting
+```
+
+The local experiment commands used this Python executable:
 
 ```bash
 /data/miniconda3/envs/gaussian_splatting/bin/python
 ```
 
-Dataset root used in the experiments:
+Dataset path used in the experiments:
 
-```bash
+```text
 /data/datasets/nerf_synthetic
 ```
 
-The tested scenes are:
+Tested scenes:
 
 ```text
 chair, ficus, lego, materials
 ```
 
-## Reproduction Commands
+## 5. Baseline Reproduction Command
 
-Run from the repository root:
+Run from the repository root. This command keeps the baseline full-SH quantized path and does not enable the low-rank SH replacement:
 
 ```bash
-cd /root/gaussian-splatting_lowrank_opacity
+/data/miniconda3/envs/gaussian_splatting/bin/python -u train_kmeans.py -s /data/datasets/nerf_synthetic/chair -m /root/lowrank_opacity_results/baseline_compgs_chair_30k --eval -w --iterations 30000 --total_iterations 30000 --test_iterations 1000 3000 5000 7000 10000 15000 20000 25000 30000 --save_iterations 30000 --densify_until_iter 15000 --kmeans_st_iter 20000 --kmeans_freq 500 --kmeans_iters 1 --kmeans_ncls 4096 --kmeans_ncls_sh 4096 --kmeans_ncls_dc 4096 --quant_params rot scale dc sh --opacity_reg --lambda_reg 1e-4
 ```
 
-Final 8-experiment batch:
+Baseline rendering and metrics:
+
+```bash
+/data/miniconda3/envs/gaussian_splatting/bin/python -u render.py -s /data/datasets/nerf_synthetic/chair -m /root/lowrank_opacity_results/baseline_compgs_chair_30k --iteration 30000 --skip_train --load_quant -w && /data/miniconda3/envs/gaussian_splatting/bin/python -u metrics.py -m /root/lowrank_opacity_results/baseline_compgs_chair_30k
+```
+
+## 6. Improved SAOP-LRSH Command
+
+Run from the repository root. This command enables both scale-aware opacity pruning and low-rank SH compression:
+
+```bash
+/data/miniconda3/envs/gaussian_splatting/bin/python -u train_kmeans.py -s /data/datasets/nerf_synthetic/chair -m /root/lowrank_opacity_results/saop_lrsh_chair_30k --eval -w --iterations 30000 --total_iterations 30000 --test_iterations 1000 3000 5000 7000 10000 15000 18500 19000 20000 25000 30000 --save_iterations 30000 --densify_until_iter 15000 --max_prune_iter 20000 --opacity_prune_start_iter 18500 --opacity_prune_interval 500 --kmeans_st_iter 20000 --kmeans_freq 500 --kmeans_iters 1 --kmeans_ncls 4096 --kmeans_ncls_sh 4096 --kmeans_ncls_dc 4096 --quant_params rot scale dc lowrank_sh --lowrank_sh_rank 32 --opacity_reg --lambda_reg 1e-4 --opacity_prune_threshold 0.07 --scale_aware_pruning --scale_prune_quantile 0.995
+```
+
+Improved rendering and metrics:
+
+```bash
+/data/miniconda3/envs/gaussian_splatting/bin/python -u render.py -s /data/datasets/nerf_synthetic/chair -m /root/lowrank_opacity_results/saop_lrsh_chair_30k --iteration 30000 --skip_train --load_quant -w && /data/miniconda3/envs/gaussian_splatting/bin/python -u metrics.py -m /root/lowrank_opacity_results/saop_lrsh_chair_30k
+```
+
+## 7. Final Batch Command
+
+The final reported 8-experiment batch is:
 
 ```bash
 /data/miniconda3/envs/gaussian_splatting/bin/python -u scripts/run_batch_op07_q995_30k.py
 ```
 
-Single-scene improved low-rank SH example:
-
-```bash
-/data/miniconda3/envs/gaussian_splatting/bin/python -u train_kmeans.py \
-  -s /data/datasets/nerf_synthetic/chair \
-  -m /root/lowrank_opacity_results/compgs_chair_30k_lowranksh_r32_opthr007_q995_lambda1e4_prune20k \
-  --eval -w \
-  --iterations 30000 --total_iterations 30000 \
-  --test_iterations 1000 3000 5000 7000 10000 15000 18500 19000 20000 25000 30000 \
-  --save_iterations 30000 \
-  --densify_until_iter 15000 \
-  --max_prune_iter 20000 \
-  --opacity_prune_start_iter 18500 \
-  --opacity_prune_interval 500 \
-  --kmeans_st_iter 20000 \
-  --kmeans_freq 500 \
-  --kmeans_iters 1 \
-  --kmeans_ncls 4096 \
-  --kmeans_ncls_sh 4096 \
-  --kmeans_ncls_dc 4096 \
-  --quant_params rot scale dc lowrank_sh \
-  --lowrank_sh_rank 32 \
-  --opacity_reg \
-  --lambda_reg 1e-4 \
-  --opacity_prune_threshold 0.07 \
-  --scale_aware_pruning \
-  --scale_prune_quantile 0.995
-```
-
-Single-scene no-low-rank ablation example:
-
-```bash
-/data/miniconda3/envs/gaussian_splatting/bin/python -u train_kmeans.py \
-  -s /data/datasets/nerf_synthetic/chair \
-  -m /root/lowrank_opacity_results/batch30k_opthr007_q995_lambda1e4_prune20k/compgs_chair_30k_nolowranksh_opthr007_q995_lambda1e4_prune20k \
-  --eval -w \
-  --iterations 30000 --total_iterations 30000 \
-  --test_iterations 1000 3000 5000 7000 10000 15000 18500 19000 20000 25000 30000 \
-  --save_iterations 30000 \
-  --densify_until_iter 15000 \
-  --max_prune_iter 20000 \
-  --opacity_prune_start_iter 18500 \
-  --opacity_prune_interval 500 \
-  --kmeans_st_iter 20000 \
-  --kmeans_freq 500 \
-  --kmeans_iters 1 \
-  --kmeans_ncls 4096 \
-  --kmeans_ncls_sh 4096 \
-  --kmeans_ncls_dc 4096 \
-  --quant_params rot scale dc sh \
-  --opacity_reg \
-  --lambda_reg 1e-4 \
-  --opacity_prune_threshold 0.07 \
-  --scale_aware_pruning \
-  --scale_prune_quantile 0.995
-```
-
-For `lego` and `materials`, the final reported configuration uses `--lambda_reg 1e-7`. For `chair` and `ficus`, it uses `--lambda_reg 1e-4`.
-
-## Evaluation Commands
-
-Render and evaluate a trained model:
-
-```bash
-/data/miniconda3/envs/gaussian_splatting/bin/python -u render.py \
-  -s /data/datasets/nerf_synthetic/chair \
-  -m /root/lowrank_opacity_results/compgs_chair_30k_lowranksh_r32_opthr007_q995_lambda1e4_prune20k \
-  --iteration 30000 --skip_train --load_quant -w
-
-/data/miniconda3/envs/gaussian_splatting/bin/python -u metrics.py \
-  -m /root/lowrank_opacity_results/compgs_chair_30k_lowranksh_r32_opthr007_q995_lambda1e4_prune20k
-```
-
-## Experiment Data
-
-Historical experiment records are stored in:
+This batch runs:
 
 ```text
-/root/experiment_data_group
+chair lowranksh
+ficus lowranksh
+lego lowranksh
+materials lowranksh
+chair nolowranksh
+ficus nolowranksh
+lego nolowranksh
+materials nolowranksh
 ```
 
-The final 8-experiment batch is stored in:
-
-```text
-/root/lowrank_opacity_results/batch30k_opthr007_q995_lambda1e4_prune20k
-```
-
-Important result files:
-
-- `/root/experiment_data_group/experiments_summary.csv`
-- `/root/experiment_data_group/final_results_30k.csv`
-- `/root/experiment_data_group/ALL_EXPERIMENTS_COMPLETENESS.md`
-- `/root/lowrank_opacity_results/batch30k_opthr007_q995_lambda1e4_prune20k/summary.csv`
-- `/root/lowrank_opacity_results/batch30k_opthr007_q995_lambda1e4_prune20k/full_8_with_compgs_comparison.csv`
-- `/root/lowrank_opacity_results/batch30k_opthr007_q995_lambda1e4_prune20k/DATA_COMPLETENESS.md`
-
-## Final Reported Batch Configuration
+Final reported hyperparameters:
 
 ```text
 iterations: 30000
@@ -188,8 +195,51 @@ lambda_reg chair/ficus: 1e-4
 lambda_reg lego/materials: 1e-7
 ```
 
-## Upload Notes
+## 8. Experiment Logs and Data
 
-Do not upload large training outputs, datasets, rendered images, or point-cloud binaries into the GitHub code repository. These belong in the separate experiment data ZIP.
+Training logs for the final batch:
 
-The GitHub repository should contain source code, scripts, environment files, and this improvement README. The experiment package should contain CSV/JSON metrics, rendered comparison images, logs, and completeness manifests.
+```text
+/root/lowrank_opacity_results/batch30k_opthr007_q995_lambda1e4_prune20k/logs
+```
+
+Final batch metrics:
+
+```text
+/root/lowrank_opacity_results/batch30k_opthr007_q995_lambda1e4_prune20k/summary.csv
+/root/lowrank_opacity_results/batch30k_opthr007_q995_lambda1e4_prune20k/summary.json
+/root/lowrank_opacity_results/batch30k_opthr007_q995_lambda1e4_prune20k/full_8_with_compgs_comparison.csv
+/root/lowrank_opacity_results/batch30k_opthr007_q995_lambda1e4_prune20k/full_8_with_compgs_comparison.md
+```
+
+Historical experiment records:
+
+```text
+/root/experiment_data_group/experiments_summary.csv
+/root/experiment_data_group/final_results_30k.csv
+/root/experiment_data_group/final_results_7k_debug.csv
+/root/experiment_data_group/ALL_EXPERIMENTS_COMPLETENESS.md
+```
+
+Packaged experiment data for course submission:
+
+```text
+/root/SLAM2026Final_upload/experiment_data_package.tar.gz
+```
+
+## 9. Notes on Data Packaging
+
+Large files are intentionally excluded from the GitHub repository:
+
+```text
+*.ply
+*.pth
+*.bin
+*.npy
+logs/
+output/
+outputs/
+```
+
+They are stored in the separate experiment data package. This keeps the GitHub repository focused on reproducible code while preserving the raw experiment records required by the report.
+
